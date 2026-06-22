@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync/atomic"
@@ -34,6 +35,29 @@ func (cfg *apiConfig) reset(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(200)
 }
 
+func validate_chirp(w http.ResponseWriter, r *http.Request) {
+	type chirp struct {
+		Body string `json:"body"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	ch := chirp{}
+	err := decoder.Decode(&ch)
+	if err != nil {
+		w.WriteHeader(500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if len(ch.Body) > 140 {
+		w.WriteHeader(400)
+		w.Write([]byte("{\"error\": \"Chirp is too long\"}"))
+	} else {
+		w.WriteHeader(200)
+		w.Write([]byte("{\"valid\": true}"))
+	}
+}
+
 func main() {
 	port := "8080"
 	apiCfg := &apiConfig{
@@ -44,6 +68,7 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", healthz)
 	mux.HandleFunc("GET /admin/metrics", apiCfg.metrics)
 	mux.HandleFunc("POST /admin/reset", apiCfg.reset)
+	mux.HandleFunc("POST /api/validate_chirp", validate_chirp)
 	srvr := &http.Server{
 		Addr:    ":" + port,
 		Handler: mux,
