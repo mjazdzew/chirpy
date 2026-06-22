@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"sync/atomic"
 )
 
@@ -52,10 +53,12 @@ func validate_chirp(w http.ResponseWriter, r *http.Request) {
 	if len(ch.Body) > 140 {
 		w.WriteHeader(400)
 		w.Write([]byte("{\"error\": \"Chirp is too long\"}"))
-	} else {
-		w.WriteHeader(200)
-		w.Write([]byte("{\"valid\": true}"))
+		return
 	}
+	re := regexp.MustCompile(`(?i)kerfuffle|(?i)sharbert|(?i)fornax`)
+	cleaned_body := re.ReplaceAllString(ch.Body, "****")
+	w.WriteHeader(200)
+	w.Write([]byte("{\"cleaned_body\": \"" + cleaned_body + "\"}"))
 }
 
 func main() {
