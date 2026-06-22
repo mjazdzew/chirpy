@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"sync/atomic"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/mjazdzew/chirpy/internal/database"
@@ -24,6 +25,7 @@ func healthz(w http.ResponseWriter, r *http.Request) {
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries      *database.Queries
+	platform       string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -40,7 +42,16 @@ func (cfg *apiConfig) metrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) reset(w http.ResponseWriter, r *http.Request) {
+	if cfg.platform != "dev" {
+		w.WriteHeader(403)
+		return
+	}
 	cfg.fileserverHits.Store(0)
+	err := cfg.dbQueries.DeleteAllUsers(r.Context())
+	if err != nil {
+		w.WriteHeader(500)
+		return
+	}
 	w.WriteHeader(200)
 }
 
@@ -69,6 +80,50 @@ func validate_chirp(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("{\"cleaned_body\": \"" + cleaned_body + "\"}"))
 }
 
+func (cfg *apiConfig) create_user(w http.ResponseWriter, r *http.Request) {
+	type email struct {
+		Email string `json:"email"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	e := email{}
+	err := decoder.Decode(&e)
+	if err != nil {
+		w.WriteHeader(500)
+		return
+	}
+
+	db_user, err := cfg.dbQueries.CreateUser(r.Context(), e.Email)
+	if err != nil {
+		w.WriteHeader(500)
+		return
+	}
+
+	type user struct {
+		ID        string    `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Email     string    `json:"email"`
+	}
+
+	u := user{
+		ID:        db_user.ID,
+		CreatedAt: db_user.CreatedAt,
+		UpdatedAt: db_user.UpdatedAt,
+		Email:     db_user.Email,
+	}
+
+	data, err := json.Marshal(u)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	w.WriteHeader(201)
+	w.Write(data)
+}
+
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
@@ -77,6 +132,7 @@ func main() {
 	apiCfg := &apiConfig{
 		fileserverHits: atomic.Int32{},
 		dbQueries:      database.New(db),
+		platform:       os.Getenv("PLATFORM"),
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app/", http.FileServer(http.Dir(".")))))
@@ -84,6 +140,7 @@ func main() {
 	mux.HandleFunc("GET /admin/metrics", apiCfg.metrics)
 	mux.HandleFunc("POST /admin/reset", apiCfg.reset)
 	mux.HandleFunc("POST /api/validate_chirp", validate_chirp)
+	mux.HandleFunc("POST /api/users", apiCfg.create_user)
 	srvr := &http.Server{
 		Addr:    ":" + port,
 		Handler: mux,
