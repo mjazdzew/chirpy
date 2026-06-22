@@ -55,13 +55,14 @@ func (cfg *apiConfig) reset(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(200)
 }
 
-func validate_chirp(w http.ResponseWriter, r *http.Request) {
+func (cfg *apiConfig) chirp(w http.ResponseWriter, r *http.Request) {
 	type chirp struct {
-		Body string `json:"body"`
+		Body   string `json:"body"`
+		UserId string `json:"user_id"`
 	}
 	decoder := json.NewDecoder(r.Body)
-	ch := chirp{}
-	err := decoder.Decode(&ch)
+	r_ch := chirp{}
+	err := decoder.Decode(&r_ch)
 	if err != nil {
 		w.WriteHeader(500)
 		return
@@ -69,15 +70,44 @@ func validate_chirp(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	if len(ch.Body) > 140 {
+	if len(r_ch.Body) > 140 {
 		w.WriteHeader(400)
 		w.Write([]byte("{\"error\": \"Chirp is too long\"}"))
 		return
 	}
 	re := regexp.MustCompile(`(?i)kerfuffle|(?i)sharbert|(?i)fornax`)
-	cleaned_body := re.ReplaceAllString(ch.Body, "****")
-	w.WriteHeader(200)
-	w.Write([]byte("{\"cleaned_body\": \"" + cleaned_body + "\"}"))
+	cleaned_body := re.ReplaceAllString(r_ch.Body, "****")
+
+	db_chirp, err := cfg.dbQueries.CreateChirp(r.Context(), database.CreateChirpParams{Body: cleaned_body, UserID: r_ch.UserId})
+	if err != nil {
+		w.WriteHeader(500)
+		return
+	}
+
+	type Chirp struct {
+		ID        string    `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Body      string    `json:"body"`
+		UserID    string    `json:"user_id"`
+	}
+
+	ch := Chirp{
+		ID:        db_chirp.ID,
+		CreatedAt: db_chirp.CreatedAt,
+		UpdatedAt: db_chirp.UpdatedAt,
+		Body:      db_chirp.Body,
+		UserID:    db_chirp.UserID,
+	}
+	data, err := json.Marshal(ch)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	w.Write(data)
 }
 
 func (cfg *apiConfig) create_user(w http.ResponseWriter, r *http.Request) {
@@ -139,8 +169,8 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", healthz)
 	mux.HandleFunc("GET /admin/metrics", apiCfg.metrics)
 	mux.HandleFunc("POST /admin/reset", apiCfg.reset)
-	mux.HandleFunc("POST /api/validate_chirp", validate_chirp)
 	mux.HandleFunc("POST /api/users", apiCfg.create_user)
+	mux.HandleFunc("POST /api/chirps", apiCfg.chirp)
 	srvr := &http.Server{
 		Addr:    ":" + port,
 		Handler: mux,
