@@ -68,8 +68,6 @@ func (cfg *apiConfig) chirp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-
 	if len(r_ch.Body) > 140 {
 		w.WriteHeader(400)
 		w.Write([]byte("{\"error\": \"Chirp is too long\"}"))
@@ -107,6 +105,76 @@ func (cfg *apiConfig) chirp(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(201)
+	w.Write(data)
+}
+
+func (cfg *apiConfig) get_chirps(w http.ResponseWriter, r *http.Request) {
+	db_chirps, err := cfg.dbQueries.GetChirps(r.Context())
+	if err != nil {
+		w.WriteHeader(500)
+		return
+	}
+
+	type Chirp struct {
+		ID        string    `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Body      string    `json:"body"`
+		UserID    string    `json:"user_id"`
+	}
+
+	var chs []Chirp
+
+	for _, ch := range db_chirps {
+		chs = append(chs, Chirp{
+			ID:        ch.ID,
+			CreatedAt: ch.CreatedAt,
+			UpdatedAt: ch.UpdatedAt,
+			Body:      ch.Body,
+			UserID:    ch.UserID,
+		})
+	}
+
+	data, err := json.Marshal(chs)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(200)
+	w.Write(data)
+}
+
+func (cfg *apiConfig) get_chirp(w http.ResponseWriter, r *http.Request) {
+	db_chirp, err := cfg.dbQueries.GetChirp(r.Context(), r.PathValue("chirpID"))
+	if err != nil {
+		w.WriteHeader(404)
+		return
+	}
+
+	type Chirp struct {
+		ID        string    `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Body      string    `json:"body"`
+		UserID    string    `json:"user_id"`
+	}
+
+	ch := Chirp{
+		ID:        db_chirp.ID,
+		CreatedAt: db_chirp.CreatedAt,
+		UpdatedAt: db_chirp.UpdatedAt,
+		Body:      db_chirp.Body,
+		UserID:    db_chirp.UserID,
+	}
+
+	data, err := json.Marshal(ch)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(200)
 	w.Write(data)
 }
 
@@ -171,6 +239,8 @@ func main() {
 	mux.HandleFunc("POST /admin/reset", apiCfg.reset)
 	mux.HandleFunc("POST /api/users", apiCfg.create_user)
 	mux.HandleFunc("POST /api/chirps", apiCfg.chirp)
+	mux.HandleFunc("GET /api/chirps", apiCfg.get_chirps)
+	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.get_chirp)
 	srvr := &http.Server{
 		Addr:    ":" + port,
 		Handler: mux,
